@@ -1,0 +1,202 @@
+const express = require("express");
+const app = express();
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+const mysql2 = require("mysql2/promise");
+const cors = require("cors");
+const { OAuth2Client } = require("google-auth-library");
+
+app.use(cors());
+app.use(express.json());
+const client = new OAuth2Client(
+  "118219891633-5uc8pm2diilakjadutiftmmui7fckf8l.apps.googleusercontent.com",
+);
+
+let db;
+let users;
+async function connection() {
+  try {
+    db = await mysql2.createConnection({
+      host: "localhost",
+      user: "root",
+      password: "password",
+      database: "asset",
+    });
+
+    [row] = await db.query(`SELECT * FROM users`);
+
+    users = row;
+
+    app.listen(8000, () => console.log("server started"));
+  } catch (e) {
+    console.log(`some error occured : ${e}`);
+  }
+}
+connection();
+
+async function checkingJwtToken(req, res, next) {
+  try {
+    const tokenContains = req.headers.authorization;
+    if (!tokenContains) return res.send("error no token");
+    const token = tokenContains.split(" ")[1];
+    const claims = await jwt.verify(token, secretKey);
+    req.user = claims;
+    next();
+  } catch (e) {
+    return res.status(401).send(e);
+  }
+}
+
+function statusChecking(status, data) {
+  return data.filter((asset) => asset.status.toLowerCase() === status.toLowerCase());
+}
+
+const secretKey = "dhfytyvytjfdyuyjtvru";
+
+
+app.post("/create-account", async (req, res) => {
+  console.log("hello server");
+  const { email, password } = req.body;
+  const hashedpassword = await bcrypt.hash(password, 10);
+  users.push({ email: email, password: hashedpassword });
+  res.json({ password: hashedpassword });
+});
+
+app.post("/login", async (req, res) => {
+  const { email, password } = req.body;
+  // console.log(users);
+  const user = users.find(
+    (user) => user.email.toLowerCase() === email.toLowerCase(),
+  );
+  console.log(user);
+  if (!user)
+    res.json({ status: "user not found or invalid username entered!" });
+  try {
+    if (await bcrypt.compare(password, user.password)) {
+      const token = jwt.sign(user, secretKey, {
+        expiresIn: "20s",
+      });
+      console.log("token created    ", token);
+      res.json({
+        status: "login success",
+        token: token,
+        user: user,
+      });
+    } else {
+      res.json({ status: "wrong password", password: password });
+    }
+  } catch {
+    res.statusCode(500).send();
+  }
+});
+
+app.post("/auth/google", async (req, res) => {
+  const { token } = req.body;
+
+  try {
+    const ticket = await client.verifyIdToken({
+      idToken: token,
+      audience:
+        "118219891633-5uc8pm2diilakjadutiftmmui7fckf8l.apps.googleusercontent.com",
+    });
+
+    const payload = ticket.getPayload();
+    const email = payload.email;
+
+    // 🔍 CHECK USER IN MYSQL
+    const [results] = await db.query(
+      "SELECT * FROM users WHERE email = ?",
+      [email],
+    );
+
+    if (results.length === 0) {
+      return res.status(403).json({
+        message: "You are not authorized to access this application",
+      });
+    }
+
+    const user = results[0];
+
+    const jwtToken = jwt.sign(
+      {
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+      },
+      secretKey, // ⚠️ you already defined this
+      { expiresIn: "1Hr" },
+    );
+
+    res.json({
+      token: jwtToken,
+      role: user.role,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(401).json({ message: "Invalid Google Token" });
+  }
+});
+
+app.get("/checking-token-on-app-start", checkingJwtToken, async (req, res) => {
+  console.log("this section is called by frontend");
+  res.json({ status: "login success", role: req.user.role });
+});
+
+app.get("/admin/dashboard", checkingJwtToken, async (req, res) => {
+  try{
+  const [row] = await db.query(`SELECT * FROM asset_details`);
+  const assigned = statusChecking("ASSIGNED", row);
+  const available = statusChecking("AVAILABLE", row);
+  const maintenance = statusChecking("MAINTENANCE", row);
+  const retired = statusChecking("RETIRED", row);
+  res.json({
+    message : "token verified",
+    assigned: assigned,
+    available: available,
+    maintenance: maintenance,
+    retired: retired,
+    employees : users.length,
+  });
+}
+catch(e){
+  res.status(401).json({message : "error occured"});
+}
+});
+
+app.get('/admin/assets', checkingJwtToken, async(req, res) => {
+  try{
+  const [assetTypes] = await db.query("SELECT category FROM asset_types");
+  const query = "SELECT ad.id, ad.asset_code, aty.category, ad.status, u.name, ad.purchased_date FROM asset_details ad LEFT JOIN asset_types aty ON ad.asset_type_id = aty.id LEFT JOIN users u ON ad.assigned_to = u.id"
+  const [allAssets] = await db.query(query);
+
+  res.status(200).json({assetTypes : assetTypes, allAssets : allAssets});
+  }
+  catch(e){
+    console.log(e);
+    res.status(500).json({message : "internal server error" + e});
+  }
+})
+
+app.get('/admin/assign', checkingJwtToken, async(req, res) => {
+  try{
+  const [users] = await db.query("SELECT * FROM users");
+  const query = "SELECT ad.id, ad.asset_code, aty.category, u.name FROM asset_details ad LEFT JOIN asset_types aty ON ad.asset_type_id = aty.id LEFT JOIN users u ON ad.assigned_to = u.id WHERE u.name = ?"
+  const [allAssets] = await db.query(query, [user]);
+
+  res.status(200).json({allAssets : allAssets, users : users});
+  }
+  catch(e){
+    console.log(e);
+    res.status(500).json({message : "internal server error" + e});
+  }
+})
+
+app.get("/users", checkingJwtToken, (req, res) => {
+  res.statusCode(200);
+  res.json(users);
+});
+
+app.post("/profile", checkingJwtToken, (req, res) => {
+  console.log(req.user);
+  res.send("succesful!");
+});
