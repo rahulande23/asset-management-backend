@@ -9,12 +9,12 @@ const {
 const { checkingJwtToken } = require("../middleware/auth");
 
 // Auth routes
+router.get("/", (req, res) => {
+  res.send("hello server started")
+});
 router.post("/create-account", createAccount);
 router.post("/login", login);
 router.post("/auth/google", googleAuth);
 router.get("/checking-token-on-app-start", checkingJwtToken, checkToken);
-router.get("/", (req, res) => {
-  res.send("hello server started")
-});
 
 module.exports = router;
