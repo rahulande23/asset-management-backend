@@ -4,13 +4,17 @@ let connection = null;
 
 const connect = async () => {
   try {
-    connection = await mysql2.createConnection({
-      host: process.env.DB_HOST,
-      user: process.env.DB_USER,
-      password: process.env.DB_PASSWORD,
-      database: process.env.DB_NAME,
-      // port: process.env.DB_PORT
-    });
+    // connection = await mysql2.createConnection({
+    //   host: process.env.DB_HOST,
+    //   user: process.env.DB_USER,
+    //   password: process.env.DB_PASSWORD,
+    //   database: process.env.DB_NAME,
+
+    connection = await mysql2.createPool(process.env.DB_URL);
+    const result = connection.query("select * from users");
+    console.log(result);
+    // port: process.env.DB_PORT
+    // });
     console.log("Database connected successfully");
     return connection;
   } catch (error) {
